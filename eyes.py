@@ -15,6 +15,7 @@ import RPi.GPIO as GPIO
 from svg.path import Path, parse_path
 from xml.dom.minidom import parse
 from gfxutil import *
+from threading import Lock, Thread
 
 # INPUT CONFIG for eye motion ----------------------------------------------
 # ANALOG INPUTS REQUIRE SNAKE EYES BONNET
@@ -49,8 +50,10 @@ if WINK_R_PIN >= 0: GPIO.setup(WINK_R_PIN, GPIO.IN, pull_up_down=GPIO.PUD_UP)
 if JOYSTICK_X_IN >= 0 or JOYSTICK_Y_IN >= 0 or PUPIL_IN >= 0:
 	adc      = Adafruit_ADS1x15.ADS1015()
 	adcValue = [0] * 4
+	lock = Lock()
 else:
 	adc = None
+	lock = None
 
 # Because ADC reads are blocking operations, they normally would slow down
 # the animation loop noticably, especially when reading multiple channels
@@ -68,14 +71,16 @@ def adcThread(adc, dest):
 			n = adc.read_adc(i, gain=1)
 			if   n <    0: n =    0
 			elif n > 1649: n = 1649
+			lock.acquire()
 			dest[i] = n / 1649.0 # Store as 0.0 to 1.0
+			lock.release()
 		time.sleep(0.01) # 100-ish Hz
 
+		
 # Start ADC sampling thread if needed:
 if adc:
 	thread.start_new_thread(adcThread, (adc, adcValue))
-
-
+		
 # Load SVG file, extract paths & convert to point lists --------------------
 
 dom               = parse("graphics/eye.svg")
@@ -348,8 +353,12 @@ def frame(p):
 
 	if JOYSTICK_X_IN >= 0 and JOYSTICK_Y_IN >= 0:
 		# Eye position from analog inputs
+		if lock:
+			lock.acquire()
 		curX = adcValue[JOYSTICK_X_IN]
 		curY = adcValue[JOYSTICK_Y_IN]
+		if lock:
+			lock.release()
 		if JOYSTICK_X_FLIP: curX = 1.0 - curX
 		if JOYSTICK_Y_FLIP: curY = 1.0 - curY
 		curX = -30.0 + curX * 60.0
@@ -663,7 +672,11 @@ def split( # Recursive simulated pupil response when no analog sensor
 while True:
 
 	if PUPIL_IN >= 0: # Pupil scale from sensor
+		if lock:
+			lock.acquire()
 		v = adcValue[PUPIL_IN]
+		if lock:
+			lock.release()
 		if PUPIL_IN_FLIP: v = 1.0 - v
 		# If you need to calibrate PUPIL_MIN and MAX,
 		# add a 'print v' here for testing.
